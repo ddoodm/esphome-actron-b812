@@ -32,7 +32,10 @@ The B812 connects to the **LE85R3-1 relay board** inside the WSHP unit via 3 wir
 
 #### Signal encoding
 
-The wall controller transmits by **shorting PWR to COM** for each 150 µs pulse. In other words, the line idles high (~7 V) and pulses are active-low.
+The wall controller transmits by **shorting PWR to COM** for each 150 µs pulse of an 8-bit pulse-distance-encoded frame repeated every 220ms. In other words, the line idles high (~7 V) and pulses are active-low.
+
+##### a single data frame:
+![B812 data frame](docs/actron_b812_data_frame.jpg)
 
 #### Power
 
