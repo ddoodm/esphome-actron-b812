@@ -28,6 +28,8 @@ The B812 connects to the **LE85R3-1 relay board** inside the WSHP unit via 3 wir
 | **COM** | Common / ground return |
 | **AUX** | Purpose unclear; possibly a pump interlock. Sits at ~3 V in a standard installation with no observed signalling. The original controller won't call for conditioning without it connected, but this component does not implement it. |
 
+![B812 connector pins](docs/actron_b812_pins.jpg)
+
 #### Signal encoding
 
 The wall controller transmits by **shorting PWR to COM** for each 150 µs pulse. In other words, the line idles high (~7 V) and pulses are active-low.
