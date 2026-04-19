@@ -160,6 +160,25 @@ If no `temperature_sensor_id` is provided, the component operates as a manual co
 
 See [docs/protocol.md](docs/protocol.md) for the full reverse-engineered protocol documentation, including physical layer, bit encoding, frame format, and observed behaviour.
 
+## Testing
+
+The compressor protection and thermostat logic is covered by a native C++ test suite using [Catch2](https://github.com/catchorg/Catch2). Tests run on the host (no ESP required) using a fake `millis()` clock for deterministic time control.
+
+```sh
+cd tests
+./run_tests.sh
+```
+
+Requires CMake ≥ 3.14 and a C++17 compiler. Catch2 is fetched automatically via CMake FetchContent.
+
+The test suite covers:
+- Compressor cooldown on restart
+- Heat->cool and cool->heat direction changes with full sequencing
+- Reversing valve held during cooldown, settle timer enforced after
+- Thermostat hysteresis and HEAT_COOL deadband behaviour
+- Rapid mode change and sensor noise stress tests
+- Regression tests for production bugs
+
 ## Tested on
 
 - ESP32-C3 (esp-idf framework)
