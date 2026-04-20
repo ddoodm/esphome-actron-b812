@@ -11,7 +11,7 @@ from esphome.components import (
 from esphome.components import time as time_
 from esphome.const import CONF_ID
 
-AUTO_LOAD = ["sensor", "binary_sensor", "text_sensor", "switch"]
+AUTO_LOAD = ["sensor", "binary_sensor", "text_sensor", "switch", "time"]
 
 actron_b812_ns = cg.esphome_ns.namespace("actron_b812")
 ActronB812Climate = actron_b812_ns.class_(
