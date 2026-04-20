@@ -1,8 +1,8 @@
 # Actron B812 / LE85 protocol
 
-This document describes the wire protocol used between Actron Controls wall controllers (**B812**, likely also **B812RT** / **B512CW** / **LE612CW** / **LE75CW**) and the **LE85** family of relay boards (**LE85**, **LE85R3**, **LE85R3-1**). Reverse engineered with an oscilloscope and a logic analyser, against a B812RT and an LE85R3-1. Pin labels, defaults and error codes are cross-referenced against the official **B812RT installation manual** ([scan](b812rt_manual_install.png)) — the wire protocol itself is not documented in the manual.
+This document describes the wire protocol used between Actron Controls wall controllers (**B812RT**, likely also **B812** / **B512CW** / **LE612CW** / **LE75CW**) and the **LE85** family of relay boards (**LE85**, **LE85R3**, **LE85R3-1**). Reverse engineered with an oscilloscope and a logic analyser, against a B812RT and an LE85R3. Pin labels, defaults and error codes are cross-referenced against the official **B812RT installation manual** ([scan](b812rt_manual_install.png)).
 
-> **Caveat**: Everything about the protocol bits and timings is based on observation of a single installation. Some behaviours may vary across LE85 variants, controller revisions or installation configurations (e.g. with a condenser pump interlock fitted, or with electric heat instead of reverse cycle — see [LE85 DIP switches](#le85-dip-switches-configured-at-install)). Corrections, additions and contradicting observations are very welcome — please open an issue.
+> **Caveat**: Everything about the protocol bits and timings is based on observation of a single installation. Some behaviours may vary across LE85 variants, controller revisions or installation configurations (e.g. with a condenser pump interlock fitted, or with electric heat instead of reverse cycle - see [LE85 DIP switches](#le85-dip-switches-configured-at-install)). Corrections, additions and contradicting observations are very welcome — please open an issue.
 
 ## Hardware context
 
@@ -12,96 +12,7 @@ According to the manufacturer wiring diagram for the LE85, the same connector pi
 
 ![LE85 wiring diagram](le85_wiring_diagram.png)
 
-The wall controller has surprisingly direct control over the mechanical hardware: bits in the frame map almost one-to-one to relays on the LE85 board (compressor, reversing valve, fan speeds, zones). This means the wall controller is responsible for honouring compressor cooldown timing and reversing valve sequencing — there is no apparent safety logic on the LE85 side.
-
-## Physical layer
-
-### Pinout
-
-According to the manufacturer installation manual, the B812RT has **5 wires** at the controller end:
-
-| Wire | Direction | Description |
-|---|---|---|
-| **PWR** | board → controller | Nominally ~7 V supply rail. Signal is also transmitted on this line by the controller. |
-| **COM** | — | Common / 0 V return |
-| **SN1** | — | Optional remote temperature sensor input (10K3T thermistor, 10 kΩ @ 25 °C). Used for Zone 1 if zoned. |
-| **SN2** | — | Optional remote temperature sensor input. Used for Zone 2 if zoned. |
-| **AUX** | board → controller | Interlock status from the LE85 (see [AUX line](#aux-line) below). |
-
-The `SN1` and `SN2` wires are only required when using external temperature sensors. With DIP switch 7 set ON the controller uses its on-board sensor and these wires can be left disconnected. Many installations therefore only use **3 wires** (PWR, COM, AUX) — including mine.
-
-![B812 connector pins](actron_b812_pins.jpg)
-
-### Voltage levels and signalling
-
-The PWR line is the supply *and* the data line. The wall controller transmits by **shorting PWR briefly to COM** for each data pulse. The line therefore idles **high (~7 V)** and pulses are **active-low**.
-
-Measured voltages (probe across PWR–COM, original B812 controller attached, no load):
-
-| State | Voltage |
-|---|---|
-| Idle (PWR high) | ~7.09 V |
-| Pulse (active-low short) | ~−0.6 V |
-
-> The −0.6 V undershoot during the active-low pulse is presumably the forward voltage of a clamping diode on the LE85 side.
-
-![Single pulse on the scope](actron_b812_pulse_screenshot.jpg)
-
-### Power budget
-
-The original B812 draws very little current — it has an LCD with a backlight and a few buttons:
-
-| Mode | Current |
-|---|---|
-| Idle (average) | ~1.7 mA |
-| Peak (during pulse short) | ~35 mA |
-
-The ~35 mA peaks line up with the active-low pulses — the controller is briefly shorting its own supply rail during each transmission.
-
-To characterise the maximum load the PWR rail can supply, I measured PWR voltage with a scope (CH1 across PWR–COM) and current with a 1.1 Ω shunt in series with the controller's COM (CH2). I then loaded PWR to COM with a series of decreasing-resistance load resistors:
-
-| Load resistor | Steady-state current | PWR (top) | Status |
-|---|---|---|---|
-| 324 Ω | 24 mA | 7.10 V | OK |
-| 264 Ω | 26 mA | 7.10 V | OK |
-| 176 Ω | 40 mA | 7.08 V | OK |
-| 118 Ω | 60 mA | 6.93 V | OK |
-| 88 Ω | 80 mA | 6.90 V | OK |
-| 66 Ω | 100 mA | 6.96 V | OK |
-| 27 Ω | — | 0 V | rail collapsed |
-
-The rail holds up gracefully to at least 100 mA with only modest voltage sag. Somewhere between 100 mA (66 Ω, OK) and ~260 mA (27 Ω, collapse) there is a hard cutoff — the rail goes from "fine" to fully shut down with no observed middle ground. An ESP32 is comfortably above this limit during Wi-Fi TX bursts, so powering the ESP from PWR is risky even though the average current would be within budget. I power my replacement controller from an external 5 V supply instead (see the main [README](../README.md#wiring) for circuit).
-
-![Load test setup](load_test_photo.png)
-
-### AUX line
-
-The B812RT installation manual ([scan](b812rt_manual_install.png)) clarifies the AUX function. The LE85 has **two separate AUX inputs**, both volt-free dry-contact inputs to GND:
-
-- **`AUX IN (A)`** — **Remote ON/OFF**. *"Connect isolated Switch (by others) between AUX IN (A) and GND. Close to Start, Open to Stop."* This is intended for building-management interlocks (e.g. a hotel/apartment master cut-off). When open, the system refuses to call for conditioning. The wall controller's ON/OFF buttons still work locally.
-- **`AUX IN (B)`** — **Condenser pump interlock**. *"Connect link between AUX IN (B) to GND if condenser pump interlock is not required or set up Off in TIMERS MENU."* In a WSHP installation with an external pump tower, this confirms the pump is running before the compressor is allowed to start. If unused, it must be hard-linked to GND.
-
-The wall controller's `AUX` wire reads back the combined "interlock satisfied" state from the LE85 — when the LE85 sees both interlocks satisfied, it asserts `AUX` to the wall controller, and the controller is allowed to call for conditioning.
-
-In my installation:
-
-- `AUX` sits at ~0 V with significant noise
-- Voltage on `AUX` shows ~1.1 V pulses synchronous with the PWR-line data pulses — almost certainly **inductive coupling** from the PWR line being shorted, not real signalling
-- With the original controller installed and `AUX` **disconnected**, the controller will run the fan but **will not call for conditioning** (compressor never starts) — exactly what the manual describes
-- With `AUX` connected, the controller behaves normally
-
-This component does not implement `AUX` in either direction — it always commands as if the interlock is satisfied. **If your installation has an active remote on/off or pump interlock, those need to be wired and configured on the LE85 itself**; the LE85 will physically prevent the compressor from running when those interlocks are not satisfied, regardless of what this controller transmits.
-
-### Safety inputs (cool / heat)
-
-The LE85 has two dedicated safety-trip inputs which are **independent of the wall controller protocol**:
-
-- **`COOL SAFETY`** — typically wired to high-pressure (HP) and low-pressure (LP) refrigerant switches
-- **`HEAT SAFETY`** — typically wired to a high-temperature (HT) cut-off switch
-
-Per the manual, when no fault is present these sit at **+14 Vdc relative to GND**. When a switch trips (e.g. high refrigerant pressure), the LE85 displays an error and **physically refuses to start the compressor regardless of what the wall controller commands**.
-
-This is significant for ESPHome replacements: the wall controller is *not* in the safety loop. There is no way for a misbehaving wall controller (or a buggy ESPHome component) to bypass these safety switches. The LE85 is the safety enforcer; the wall controller is purely a request channel.
+The wall controller has surprisingly direct control over the mechanical hardware: bits in the frame map almost one-to-one to relays on the LE85 board (compressor, reversing valve, fan speeds, zones). This means the wall controller is responsible for honouring compressor cooldown timing and reversing valve sequencing - there is no apparent safety logic on the LE85 side.
 
 ## Data link layer
 
@@ -157,6 +68,66 @@ The zone bits both default to `1`; an installation with no zoning still sees bot
 | `0x6E` | `0110 1110` | Heating, fan low, both zones, calling, compressor on |
 | `0xE1` | `1110 0001` | Fan-only high speed, both zones |
 
+## Physical layer
+
+### Pinout
+
+The B812RT has **5 wires** at the controller end:
+
+| Wire | Direction | Description |
+|---|---|---|
+| **PWR** | board → controller | Nominally ~7 V supply rail. Signal is also transmitted on this line by the controller. |
+| **COM** | — | Common / 0 V return |
+| **SN1** | — | Optional remote temperature sensor input (10K3T thermistor, 10 kΩ @ 25 °C). Used for Zone 1 if zoned. |
+| **SN2** | — | Optional remote temperature sensor input. Used for Zone 2 if zoned. |
+| **AUX** | board → controller | Interlock status from the LE85 (see [AUX line](#aux-line) below). |
+
+The `SN1` and `SN2` wires are only required when using external temperature sensors. With DIP switch 7 set ON the controller uses its on-board sensor and these wires can be left disconnected. Many installations therefore only use **3 wires** (PWR, COM, AUX) - including mine.
+
+![B812 connector pins](actron_b812_pins.jpg)
+
+### Voltage levels and signalling
+
+The PWR line is the supply *and* the data line. The wall controller transmits by **shorting PWR briefly to COM** for each data pulse. The line therefore idles **high (~7 V)** and pulses are **active-low**.
+
+Measured voltages (probe across PWR–COM, original B812 controller attached, no load):
+
+| State | Voltage |
+|---|---|
+| Idle (PWR high) | ~7.09 V |
+| Pulse (active-low short) | ~−0.6 V |
+
+> The −0.6 V undershoot during the active-low pulse is presumably the forward voltage of a clamping diode on the LE85 side.
+
+![Single pulse on the scope](actron_b812_pulse_screenshot.jpg)
+
+### Power budget
+
+The original B812 draws very little current — it has an LCD with a backlight and a few buttons:
+
+| Mode | Current |
+|---|---|
+| Idle (average) | ~1.7 mA |
+| Peak (during pulse short) | ~35 mA |
+
+The ~35 mA peaks line up with the active-low pulses — the controller is briefly shorting its own supply rail during each transmission.
+
+To characterise the maximum load the PWR rail can supply, I measured PWR voltage with a scope (CH1 across PWR–COM) and current with a 1.1 Ω shunt in series with the controller's COM (CH2). I then loaded PWR to COM with a series of decreasing-resistance load resistors:
+
+| Load resistor | Steady-state current | PWR (top) | Status |
+|---|---|---|---|
+| 324 Ω | 24 mA | 7.10 V | OK |
+| 264 Ω | 26 mA | 7.10 V | OK |
+| 176 Ω | 40 mA | 7.08 V | OK |
+| 118 Ω | 60 mA | 6.93 V | OK |
+| 88 Ω | 80 mA | 6.90 V | OK |
+| 66 Ω | 100 mA | 6.96 V | OK |
+| 27 Ω | — | 0 V | rail collapsed |
+
+The rail holds up gracefully to at least 100 mA with only modest voltage sag. Somewhere between 100 mA (66 Ω, OK) and ~260 mA (27 Ω, collapse) there is a hard cutoff — the rail goes from "fine" to fully shut down with no observed middle ground. An ESP32 is comfortably above this limit during Wi-Fi TX bursts, so powering the ESP from PWR is risky even though the average current would be within budget. I power my replacement controller from an external 5 V supply instead (see the main [README](../README.md#wiring) for circuit).
+
+![Load test setup](load_test_photo.png)
+
 ## Observed timing behaviour
 
 The wall controller is responsible for sequencing the compressor and reversing valve safely. The LE85 appears to obey whatever it is told instantly — there is no apparent debouncing or protection on the relay board. These are the timings observed from the original B812 controller:
@@ -177,12 +148,7 @@ For roughly **2 seconds after power-on**, the original controller transmits all-
 
 ### CALL / COMP de-coupling
 
-The `CALL` bit is *not* always synchronised with `COMP`. In particular:
-
-- During the compressor cooldown window, `COMP` is `0` (compressor off) but `CALL` may be `1` (the thermostat still wants conditioning, but the cooldown timer is preventing the compressor from starting)
-- When the thermostat is satisfied, `CALL` clears even if `COMP` is still being held off due to cooldown
-
-See the next section for more on `CALL`.
+The `CALL` bit is *not* always synchronised with `COMP`. During the compressor cooldown window, `COMP` is `0` (compressor off) but `CALL` may be `1` (the thermostat still wants conditioning, but the cooldown timer is preventing the compressor from starting)
 
 ## The `CALL` bit
 
@@ -197,13 +163,38 @@ But its purpose on the wire is unclear, because:
 2. The reversing valve is driven directly by `HEAT`, not `CALL`
 3. The fan is driven directly by `FS1`/`FS2`/`FS3`, not `CALL`
 
-So `CALL` doesn't physically do anything observable. It might be:
-
-- A status indication for an external system (e.g. a building management interlock)
-- A protocol-level sanity check (the LE85 rejects `COMP=1` with `CALL=0` as malformed?) — untested
-- A vestige from a different controller variant
+So `CALL` doesn't physically do anything observable. It might be a vestige from a different controller variant
 
 This component sets `CALL` whenever the thermostat is engaged, regardless of the compressor state, to match what the original controller transmits.
+
+### AUX line
+
+The B812RT installation manual ([scan](b812rt_manual_install.png)) clarifies the AUX function. The LE85 has **two separate AUX inputs**, both volt-free dry-contact inputs to GND:
+
+- **`AUX IN (A)`** — **Remote ON/OFF**. *"Connect isolated Switch (by others) between AUX IN (A) and GND. Close to Start, Open to Stop."* This is intended for building-management interlocks (e.g. a hotel/apartment master cut-off). When open, the system refuses to call for conditioning. The wall controller's ON/OFF buttons still work locally.
+- **`AUX IN (B)`** — **Condenser pump interlock**. *"Connect link between AUX IN (B) to GND if condenser pump interlock is not required or set up Off in TIMERS MENU."* In a WSHP installation with an external pump tower, this confirms the pump is running before the compressor is allowed to start. If unused, it must be hard-linked to GND.
+
+The wall controller's `AUX` wire reads back the combined "interlock satisfied" state from the LE85 - when the LE85 sees both interlocks satisfied, it asserts `AUX` to the wall controller, and the controller is allowed to call for conditioning.
+
+In my installation:
+
+- `AUX` sits at ~0 V with significant noise
+- Voltage on `AUX` shows ~1.1 V pulses synchronous with the PWR-line data pulses — almost certainly **inductive coupling** from the PWR line being shorted, not real signalling
+- With the original controller installed and `AUX` **disconnected**, the controller will run the fan but **will not call for conditioning** (compressor never starts) — exactly what the manual describes
+- With `AUX` connected, the controller behaves normally
+
+This component does not implement `AUX` in either direction — it always commands as if the interlock is satisfied. **If your installation has an active remote on/off or pump interlock, those need to be wired and configured on the LE85 itself**; the LE85 will physically prevent the compressor from running when those interlocks are not satisfied, regardless of what this controller transmits.
+
+### Safety inputs (cool / heat)
+
+The LE85 has two dedicated safety-trip inputs which are **independent of the wall controller protocol**:
+
+- **`COOL SAFETY`** — typically wired to high-pressure (HP) and low-pressure (LP) refrigerant switches
+- **`HEAT SAFETY`** — typically wired to a high-temperature (HT) cut-off switch
+
+Per the manual, when no fault is present these sit at **+14 Vdc relative to GND**. When a switch trips (e.g. high refrigerant pressure), the LE85 displays an error and **physically refuses to start the compressor regardless of what the wall controller commands**.
+
+This is significant for ESPHome replacements: the wall controller is *not* in the safety loop. There is no way for a misbehaving wall controller (or a buggy ESPHome component) to bypass these safety switches. The LE85 is the safety enforcer; the wall controller is purely a request channel.
 
 ## LE85 reference (from the B812RT manual)
 
@@ -219,14 +210,6 @@ Useful constants and error codes from the official B812RT installation manual ([
 | Fan run-on (electric heat only) | 60 s | field-adjustable |
 | Run timer (serviced apartments) | None | 3 / 6 / 9 hr |
 
-### Error codes shown on the wall controller display
-
-| Display | Meaning |
-|---|---|
-| `Err` | Sensor error |
-| `E-P` flashing | Pump fault |
-| `COOLING` flashing | Cool / heat safety switch tripped |
-
 ### LE85 hardware spec
 
 - Mains supply: 240 VAC 50 Hz
@@ -235,9 +218,7 @@ Useful constants and error codes from the official B812RT installation manual ([
 - Zone & fan relays: 16 A resistive @ 250 VAC (×5 — 2 zones, 3 fan speeds)
 - On-board sensor: 10K3T thermistor, 10 kΩ @ 25 °C
 
-### LE85 DIP switches (configured at install)
-
-The LE85 has 8 DIP switches that select hardware mode. These are **not** transmitted in the wall-controller protocol — they configure the relay board's interpretation of the bits:
+### B812 DIP switches
 
 | Switch | OFF | ON |
 |---|---|---|
@@ -248,8 +229,6 @@ The LE85 has 8 DIP switches that select hardware mode. These are **not** transmi
 | 5 / 6 | Run-timer duration selector (None / 3 hr / 6 hr / 9 hr) | |
 | 7 | Use remote sensor on SN1 | Use on-board sensor |
 | 8 | 6-hr run timer | 24-hr run timer |
-
-This explains why behaviour observed against one installation may differ from another — for example, switch 1 changes whether the `HEAT` bit means "energise the reversing valve" or "engage the electric heater", and switches 5/6/8 enable a hardware shutoff timer used in serviced-apartment installs.
 
 ## Reverse-engineering methodology
 
@@ -267,9 +246,9 @@ A working spreadsheet from this process is preserved here: [Actron B812 aircon s
 
 ### Capture chain
 
-1. **Oscilloscope** for initial visualisation of the signal — figuring out the encoding, voltage levels, and the basic frame structure
-2. **Logic analyser** for long captures of frames and accurate bit-timing measurements
-3. **Oscilloscope (cursor mode)** to verify the timings the LA reported and to do voltage / current characterisation
+1. **Oscilloscope** for initial visualisation of the signal - figuring out the encoding, voltage levels, and the basic frame structure
+2. **Logic analyser** to verify timing
+3. **Oscilloscope (cursor mode)** voltage / current characterisation
 
 ## Open questions
 
