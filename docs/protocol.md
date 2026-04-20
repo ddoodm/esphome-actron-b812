@@ -72,7 +72,7 @@ To characterise the maximum load the PWR rail can supply, I measured PWR voltage
 
 The rail holds up gracefully to at least 100 mA with only modest voltage sag. Somewhere between 100 mA (66 Ω, OK) and ~260 mA (27 Ω, collapse) there is a hard cutoff — the rail goes from "fine" to fully shut down with no observed middle ground. An ESP32 is comfortably above this limit during Wi-Fi TX bursts, so powering the ESP from PWR is risky even though the average current would be within budget. I power my replacement controller from an external 5 V supply instead (see the main [README](../README.md#wiring) for circuit).
 
-![Load test setup](load_test_photo.jpg)
+![Load test setup](load_test_photo.png)
 
 ### AUX line
 
