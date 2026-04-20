@@ -46,7 +46,7 @@ CONFIG_SCHEMA = climate.climate_schema(ActronB812Climate).extend({
     cv.Optional(CONF_VALVE_SETTLE_TIME, default="30s"): cv.positive_time_period_milliseconds,
     cv.Optional(CONF_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
     cv.Optional(CONF_HYSTERESIS, default=0.5): cv.positive_float,
-    cv.Optional(CONF_AUTO_DEADBAND, default=1.0): cv.positive_float,
+    cv.Optional(CONF_AUTO_DEADBAND, default=1.5): cv.positive_float,
     cv.Optional(CONF_AUTO_DEADBAND_TIMEOUT, default="20min"): cv.positive_time_period_milliseconds,
     cv.Optional(CONF_TIME_ID): cv.use_id(time_.RealTimeClock),
     cv.Optional(CONF_COMPRESSOR_RUNNING): binary_sensor.binary_sensor_schema(),

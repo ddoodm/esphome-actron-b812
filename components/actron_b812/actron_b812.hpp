@@ -96,7 +96,7 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   // Thermostat
   sensor::Sensor *temperature_sensor_{nullptr};
   float hysteresis_{0.5f};
-  float auto_deadband_{1.0f};
+  float auto_deadband_{1.5f};  // matches Actron B812RT factory default
   // How long after going idle before the cross-mode deadband expires.
   // Prevents slow thermal drift (e.g. sun warming room) from being blocked by overshoot protection.
   // Set to 0 to disable. Default 20 min.

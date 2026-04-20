@@ -2,7 +2,11 @@
 
 ESPHome external component to replace the **Actron B812** wall controller on WSHP (water-source heat pump) air conditioners with a LE85R3-1 relay board.
 
-The B812 communicates over a 2-wire bus using a custom pulse-distance coding protocol that has not (to my knowledge) been documented publicly before. This repo contains both the ESPHome component and [full protocol documentation](docs/protocol.md).
+> *Wall controllers covered: **B812**, **B812RT**, **B512CW**. Likely also **LE612CW**, **LE75CW**.*  
+> *Relay boards covered: **LE85**, **LE85R3**, **LE85R3-1**.*  
+> *Brands: Actron, ActronAir, Actron Controls. WSHP / water-source / ground-source / geothermal heat pumps.*
+
+The B812 communicates with the LE85 over a 2-wire bus using a custom pulse-distance coding protocol that has not (to my knowledge) been documented publicly before. This repo contains both the ESPHome component and [full protocol documentation](docs/protocol.md).
 
 ## Features
 
@@ -18,15 +22,27 @@ The B812 communicates over a 2-wire bus using a custom pulse-distance coding pro
 
 The B812 is a wall-mounted controller found on some (seemingly obscure 😆) Actron Controls WSHP units. It connects to the WSHP unit via a 2-wire bus and continuously transmits the desired state at ~222 ms intervals, like an IR remote but over a power wire 😆📺.
 
+> **Compatibility note**:
+>
+> **Wall controllers** — The same connector pinout is used by several other Actron Controls wall controllers: **B812**, **B812RT**, **B512CW**, **LE612CW** and **LE75CW**. The B812 (likely the **B812RT** zoned variant) and the B512CW are described as interchangeable on the LE85R3-1 by retailer documentation, so this component is very likely to work as a B512CW replacement too. The LE612CW / LE75CW share the connector pinout but their protocol compatibility is not confirmed.
+>
+> **Relay boards** — Verified against the **LE85R3-1** specifically. The wider **LE85** / **LE85R3** family is likely compatible since these controllers are sold as direct replacements for each other, but I have only personally tested with the LE85R3-1.
+>
+> If you successfully use this component (or fail to!) with any of these variants, please open an issue or PR.
+
 ### Wiring
 
-The B812 connects to the **LE85R3-1 relay board** inside the WSHP unit via 3 wires:
+The B812RT connects to the **LE85R3-1 relay board** inside the WSHP unit via up to 5 wires (3 of which are required when using the on-board temperature sensor):
 
-| Wire | Description |
-|---|---|
-| **PWR** | Nominally 7 V supply - also the signal wire |
-| **COM** | Common / ground return |
-| **AUX** | Purpose unclear; possibly a pump interlock. Sits at ~3 V in a standard installation with no observed signalling. The original controller won't call for conditioning without it connected, but this component does not implement it. |
+| Wire | Required | Description |
+|---|---|---|
+| **PWR** | yes | Nominally 7 V supply - also the signal wire |
+| **COM** | yes | Common / ground return |
+| **AUX** | yes | Reads back "interlock satisfied" from the LE85 (combines remote on/off + pump interlock). The original controller won't call for conditioning without it. This component ignores it — interlocks should be handled on the LE85 side. |
+| **SN1** | no | Optional remote temperature sensor input (10K3T thermistor). |
+| **SN2** | no | Optional second remote temperature sensor input. |
+
+For a typical installation using ESPHome's own sensor (e.g. a BLE temperature sensor reported via Home Assistant), only PWR / COM / AUX are needed. See [docs/protocol.md](docs/protocol.md#pinout) for full pin details.
 
 ![B812 connector pins](docs/actron_b812_pins.jpg)
 
@@ -39,7 +55,7 @@ The wall controller transmits by **shorting PWR to COM** for each 150 µs pulse 
 
 #### Power
 
-The original B812 draws ~1 mA idle and ~3 mA with the backlight on. An ESP32 draws significantly more than the ~120 mA the PWR rail can reliably supply, so powering the ESP from PWR directly is not practical.
+The original B812 draws ~1.7 mA average (with ~35 mA peaks while it's transmitting). The PWR rail holds up to about 100 mA before collapsing entirely — an ESP32 will spike well past that during Wi-Fi TX, so powering the ESP from PWR is not practical. See [docs/protocol.md](docs/protocol.md#power-budget) for the full load test.
 
 The recommended approach is to **power the ESP from an external 5 V supply** and use an **N-channel MOSFET** to short PWR to COM under GPIO control:
 
@@ -102,7 +118,7 @@ climate:
     # Thermostat (optional)
     temperature_sensor_id: my_temp  # Sensor to use for current temperature
     hysteresis: 0.5                 # °C - deadband before engaging in cool/heat mode (default 0.5)
-    auto_deadband: 1.0              # °C - gap between heat and cool thresholds in heat/cool mode (default 1.0)
+    auto_deadband: 1.5              # °C - gap between heat and cool thresholds in heat/cool mode (default 1.5, matches Actron factory default)
     auto_deadband_timeout: 20min    # How long idle before deadband protection expires (default 20min, 0 to disable)
 
     # Compressor protection (optional)
