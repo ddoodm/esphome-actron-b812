@@ -1,10 +1,9 @@
 # esphome-actron-b812
 
-ESPHome external component to replace the **Actron B812** wall controller on WSHP (water-source heat pump) air conditioners with a LE85R3-1 relay board.
+ESPHome external component to replace the **Actron B812(RT)** wall controller on WSHP (water-source heat pump) air conditioners with a LE85R3 relay board.
 
 > *Wall controllers covered: **B812**, **B812RT**, **B512CW**. Likely also **LE612CW**, **LE75CW**.*  
-> *Relay boards covered: **LE85**, **LE85R3**, **LE85R3-1**.*  
-> *Brands: Actron, ActronAir, Actron Controls. WSHP / water-source / ground-source / geothermal heat pumps.*
+> *Relay boards covered: **LE85**, **LE85R3**, **LE85R3-1**.* 
 
 The B812 communicates with the LE85 over a 2-wire bus using a custom pulse-distance coding protocol that has not (to my knowledge) been documented publicly before. This repo contains both the ESPHome component and [full protocol documentation](docs/protocol.md).
 
@@ -20,29 +19,33 @@ The B812 communicates with the LE85 over a 2-wire bus using a custom pulse-dista
 
 ## Hardware
 
-The B812 is a wall-mounted controller found on some (seemingly obscure 😆) Actron Controls WSHP units. It connects to the WSHP unit via a 2-wire bus and continuously transmits the desired state at ~222 ms intervals, like an IR remote but over a power wire 😆📺.
+The Actron Controls B812 is a wall-mounted controller which connects to a LE85R3 relay board found in some (seemingly obscure 😆) WSHP units. It connects to the WSHP unit via a 2-wire bus and continuously transmits the desired state at ~222 ms intervals in 8-bit data frames over the power wire, like an IR remote but over power 😆📺.
 
 > **Compatibility note**:
 >
-> **Wall controllers** — The same connector pinout is used by several other Actron Controls wall controllers: **B812**, **B812RT**, **B512CW**, **LE612CW** and **LE75CW**. The B812 (likely the **B812RT** zoned variant) and the B512CW are described as interchangeable on the LE85R3-1 by retailer documentation, so this component is very likely to work as a B512CW replacement too. The LE612CW / LE75CW share the connector pinout but their protocol compatibility is not confirmed.
+> **Wall controllers** — The same connector pinout is used by several other Actron Controls wall controllers: **B812**, **B812RT**(?), **B512CW**, **LE612CW** and **LE75CW**. The B812 and the B512CW are described as interchangeable on the LE85R3-1 by retailer documentation, so this component is very likely to work as a B512CW replacement too. The LE612CW / LE75CW share the connector pinout but their protocol compatibility is not confirmed.
 >
-> **Relay boards** — Verified against the **LE85R3-1** specifically. The wider **LE85** / **LE85R3** family is likely compatible since these controllers are sold as direct replacements for each other, but I have only personally tested with the LE85R3-1.
+> **Relay boards** — Verified against the **LE85R3** specifically. The wider **LE85** / **LE85R3** family is likely compatible since these controllers are sold as direct replacements for each other, but I have only personally tested with the LE85R3.
 >
 > If you successfully use this component (or fail to!) with any of these variants, please open an issue or PR.
 
+| WSHP with LE85R3 relay module | B812RT Wall Controller |
+|---|---|
+| ![WSHP with Actron Controls LE85R3 relay module](docs/wshp.jpg) | ![Actron Controls B812RT Wall Controller](docs/actron_B812RT.jpg) |
+
 ### Wiring
 
-The B812RT connects to the **LE85R3-1 relay board** inside the WSHP unit via up to 5 wires (3 of which are required when using the on-board temperature sensor):
+The B812RT connects to the **LE85R3 relay board** inside the WSHP unit via up to 5 wires (3 of which are required when using the on-board temperature sensor):
 
 | Wire | Required | Description |
 |---|---|---|
 | **PWR** | yes | Nominally 7 V supply - also the signal wire |
 | **COM** | yes | Common / ground return |
-| **AUX** | yes | Reads back "interlock satisfied" from the LE85 (combines remote on/off + pump interlock). The original controller won't call for conditioning without it. This component ignores it — interlocks should be handled on the LE85 side. |
+| **AUX** | yes (on original B812RT, not this component) | Reads back "interlock satisfied" from the LE85 (combines remote on/off + pump interlock). The original controller won't call for conditioning without it. This component ignores it |
 | **SN1** | no | Optional remote temperature sensor input (10K3T thermistor). |
 | **SN2** | no | Optional second remote temperature sensor input. |
 
-For a typical installation using ESPHome's own sensor (e.g. a BLE temperature sensor reported via Home Assistant), only PWR / COM / AUX are needed. See [docs/protocol.md](docs/protocol.md#pinout) for full pin details.
+For this component, only PWR and COM are needed. See [docs/protocol.md](docs/protocol.md#pinout) for full pin details.
 
 ![B812 connector pins](docs/actron_b812_pins.jpg)
 
@@ -118,11 +121,11 @@ climate:
     # Thermostat (optional)
     temperature_sensor_id: my_temp  # Sensor to use for current temperature
     hysteresis: 0.5                 # °C - deadband before engaging in cool/heat mode (default 0.5)
-    auto_deadband: 1.5              # °C - gap between heat and cool thresholds in heat/cool mode (default 1.5, matches Actron factory default)
+    auto_deadband: 1.5              # °C - gap between heat and cool thresholds in heat/cool mode (default 1.5)
     auto_deadband_timeout: 20min    # How long idle before deadband protection expires (default 20min, 0 to disable)
 
     # Compressor protection (optional)
-    compressor_cooldown: 3min       # Minimum off-time before compressor can restart (default 3min)
+    compressor_cooldown: 5min       # Minimum off-time before compressor can restart (default 5min)
     valve_settle_time: 30s          # Time to wait after reversing valve switches before restarting (default 30s)
 
     # Time source for diagnostic timestamps (optional)
@@ -173,7 +176,7 @@ The component includes a soft thermostat - connect any ESPHome `sensor` as `temp
 - **Cool / Heat modes**: compressor engages when temperature drifts `hysteresis` past the setpoint; turns off when setpoint is reached
 - **Heat/Cool auto mode**: a deadband of `auto_deadband` °C separates the heat and cool engagement thresholds, preventing the system from bouncing between modes after an overshoot. After `auto_deadband_timeout` of idle, the protection expires so the unit can respond to slow thermal drift (e.g. afternoon sun)
 
-If no `temperature_sensor_id` is provided, the component operates as a manual controller - the compressor runs whenever the mode is cool/heat/fan-only and stops when switched off.
+A `temperature_sensor_id` is required for the compressor to engage in cool, heat, or heat/cool modes. Without one, `thermostat_direction` remains idle and the unit will only run the fan (if a non-auto fan speed is set). Fan-only mode works regardless of whether a sensor is configured. TODO: support manual control 😃
 
 ## Protocol
 
