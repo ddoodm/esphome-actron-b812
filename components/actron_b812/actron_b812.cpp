@@ -63,8 +63,6 @@ void ActronB812Climate::control(const climate::ClimateCall &call) {
   }
   if (call.get_fan_mode().has_value()) {
     pending_fan_ = *call.get_fan_mode();
-    if (pending_fan_ != climate::CLIMATE_FAN_AUTO)
-      pending_auto_fan_speed_ = pending_fan_;
   }
   if (call.get_target_temperature().has_value()) {
     if (*call.get_target_temperature() != this->target_temperature)
@@ -88,13 +86,11 @@ void ActronB812Climate::control(const climate::ClimateCall &call) {
 void ActronB812Climate::update() {
   // Fan speed is always applied immediately, even during cooldown waits.
   // Skip when OFF — CMD_OFF zeroes all bits including fan.
-  // In AUTO mode the fan only runs while the compressor is physically on.
   if (pending_mode_ != climate::CLIMATE_MODE_OFF) {
     active_cmd_ &= ~(BIT_FS1 | BIT_FS2 | BIT_FS3);
-    bool apply_fan = (pending_fan_ != climate::CLIMATE_FAN_AUTO) || comp_running_;
-    if (apply_fan) {
+    if (fan_should_run_()) {
       climate::ClimateFanMode speed =
-          (pending_fan_ == climate::CLIMATE_FAN_AUTO) ? pending_auto_fan_speed_ : pending_fan_;
+          (pending_fan_ == climate::CLIMATE_FAN_AUTO) ? auto_fan_speed_() : pending_fan_;
       switch (speed) {
         case climate::CLIMATE_FAN_LOW:    active_cmd_ |= BIT_FS1; break;
         case climate::CLIMATE_FAN_MEDIUM: active_cmd_ |= BIT_FS2; break;
@@ -333,6 +329,18 @@ void ActronB812Climate::publish_sensors_() {
       call_active_sensor_->publish_state(val);
     }
   }
+
+  if (fan_speed_sensor_) {
+    std::string fs;
+    if      (active_cmd_ & BIT_FS3) fs = "high";
+    else if (active_cmd_ & BIT_FS2) fs = "medium";
+    else if (active_cmd_ & BIT_FS1) fs = "low";
+    else                            fs = "off";
+    if (fs != fan_speed_last_) {
+      fan_speed_last_ = fs;
+      fan_speed_sensor_->publish_state(fs);
+    }
+  }
 }
 
 void ActronB812Climate::evaluate_thermostat_() {
@@ -436,18 +444,39 @@ void ActronB812Climate::update_action_() {
   }
 }
 
+climate::ClimateFanMode ActronB812Climate::auto_fan_speed_() {
+  float t = this->current_temperature;
+  float tgt = this->target_temperature;
+  if (std::isnan(t) || std::isnan(tgt))
+    return climate::CLIMATE_FAN_LOW;
+  float diff = std::fabs(t - tgt);
+  if (diff > auto_fan_high_thresh_)
+    return climate::CLIMATE_FAN_HIGH;
+  if (diff > auto_fan_med_thresh_)
+    return climate::CLIMATE_FAN_MEDIUM;
+  return climate::CLIMATE_FAN_LOW;
+}
+
+bool ActronB812Climate::fan_should_run_() {
+  switch (pending_mode_) {
+    case climate::CLIMATE_MODE_FAN_ONLY:
+      return true;
+    case climate::CLIMATE_MODE_COOL:
+    case climate::CLIMATE_MODE_HEAT:
+    case climate::CLIMATE_MODE_HEAT_COOL:
+      return !fan_auto_off_ || comp_running_;
+    default:
+      return false;
+  }
+}
+
 uint8_t ActronB812Climate::build_cmd_(climate::ClimateMode mode,
                                       climate::ClimateFanMode fan) {
   uint8_t cmd = 0;
 
-  // In AUTO mode the fan only follows the compressor: suppress fan bits when the
-  // effective mode is FAN_ONLY (thermostat idle).  Use the last manual speed otherwise.
-  bool apply_fan = (fan != climate::CLIMATE_FAN_AUTO) ||
-                   (mode == climate::CLIMATE_MODE_COOL || mode == climate::CLIMATE_MODE_HEAT);
-  climate::ClimateFanMode speed =
-      (fan == climate::CLIMATE_FAN_AUTO) ? pending_auto_fan_speed_ : fan;
-
-  if (apply_fan) {
+  if (fan_should_run_()) {
+    climate::ClimateFanMode speed =
+        (fan == climate::CLIMATE_FAN_AUTO) ? auto_fan_speed_() : fan;
     switch (speed) {
       case climate::CLIMATE_FAN_LOW:    cmd |= BIT_FS1; break;
       case climate::CLIMATE_FAN_MEDIUM: cmd |= BIT_FS2; break;
@@ -487,6 +516,10 @@ void ActronB812ZoneSwitch::write_state(bool state) {
   this->parent_->set_zone_enabled(this->zone_, state);
 }
 
+void ActronB812FanAutoOffSwitch::write_state(bool state) {
+  this->parent_->set_fan_auto_off(state);
+}
+
 void ActronB812Climate::set_zone_enabled(uint8_t zone, bool enabled) {
   if (zone != 1 && zone != 2) return;
   bool &target = (zone == 1) ? zone_1_enabled_ : zone_2_enabled_;
@@ -518,6 +551,17 @@ void ActronB812Climate::set_zone_enabled(uint8_t zone, bool enabled) {
 
   ESP_LOGD(TAG, "Zone %u -> %s%s", zone, enabled ? "on" : "off",
            other_forced_on ? " (other auto-enabled)" : "");
+}
+
+void ActronB812Climate::set_fan_auto_off(bool enabled) {
+  if (fan_auto_off_ == enabled) {
+    if (fan_auto_off_switch_) fan_auto_off_switch_->publish_state(fan_auto_off_);
+    return;
+  }
+  fan_auto_off_ = enabled;
+  if (fan_auto_off_switch_) fan_auto_off_switch_->publish_state(fan_auto_off_);
+  pending_change_ = true;
+  ESP_LOGD(TAG, "Fan auto-off -> %s", enabled ? "on" : "off");
 }
 
 void ActronB812Climate::send_frame_(uint8_t data) {

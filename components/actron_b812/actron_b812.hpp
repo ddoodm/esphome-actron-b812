@@ -43,6 +43,18 @@ class ActronB812ZoneSwitch : public switch_::Switch {
   uint8_t zone_;
 };
 
+// Switch that toggles the "fan auto-off" feature: when ON, the fan is
+// suppressed while the compressor is idle (heat/cool/heat_cool modes only).
+class ActronB812FanAutoOffSwitch : public switch_::Switch {
+ public:
+  explicit ActronB812FanAutoOffSwitch(ActronB812Climate *parent)
+      : parent_(parent) {}
+
+ protected:
+  void write_state(bool state) override;
+  ActronB812Climate *parent_;
+};
+
 class ActronB812Climate : public climate::Climate, public PollingComponent {
  public:
   ActronB812Climate() : PollingComponent(222) {}
@@ -57,6 +69,8 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   void set_auto_deadband(float d) { auto_deadband_ = d; }
   void set_auto_deadband_timeout(uint32_t ms) { auto_deadband_timeout_ms_ = ms; }
   void set_time(time::RealTimeClock *t) { time_ = t; }
+  void set_auto_fan_high_threshold(float v) { auto_fan_high_thresh_ = v; }
+  void set_auto_fan_medium_threshold(float v) { auto_fan_med_thresh_ = v; }
 
   void set_compressor_running_sensor(binary_sensor::BinarySensor *s) { compressor_running_sensor_ = s; }
   void set_state_sensor(text_sensor::TextSensor *s) { state_sensor_ = s; }
@@ -66,13 +80,19 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   void set_deadband_expires_at_sensor(text_sensor::TextSensor *s) { deadband_expires_at_sensor_ = s; }
   void set_reversing_valve_sensor(binary_sensor::BinarySensor *s) { reversing_valve_sensor_ = s; }
   void set_call_active_sensor(binary_sensor::BinarySensor *s) { call_active_sensor_ = s; }
+  void set_fan_speed_sensor(text_sensor::TextSensor *s) { fan_speed_sensor_ = s; }
   void set_zone_1_switch(ActronB812ZoneSwitch *s) { zone_1_switch_ = s; }
   void set_zone_2_switch(ActronB812ZoneSwitch *s) { zone_2_switch_ = s; }
+  void set_fan_auto_off_switch(ActronB812FanAutoOffSwitch *s) { fan_auto_off_switch_ = s; }
 
   // Toggle a zone enable. Enforces the invariant that at least one zone is
   // always enabled — disabling a zone while the other is already off will
   // auto-enable the other (last-toggle-wins).  Triggers retransmit.
   void set_zone_enabled(uint8_t zone, bool enabled);
+
+  // Toggle fan auto-off. When enabled the fan is suppressed while the
+  // compressor is idle in heat/cool/heat_cool modes. Triggers retransmit.
+  void set_fan_auto_off(bool enabled);
 
   void setup() override;
   void update() override;  // Called every 222ms — sends current frame
@@ -89,8 +109,6 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   // What HA has asked for — may differ from active if we're waiting on a timer
   climate::ClimateMode pending_mode_{climate::CLIMATE_MODE_OFF};
   climate::ClimateFanMode pending_fan_{climate::CLIMATE_FAN_LOW};
-  // Speed to use when pending_fan_ == AUTO; updated whenever a concrete speed is selected.
-  climate::ClimateFanMode pending_auto_fan_speed_{climate::CLIMATE_FAN_LOW};
   bool pending_change_{false};
 
   // Thermostat
@@ -108,6 +126,14 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   // auto_deadband_ before allowing the *opposite* direction to engage.
   // Cleared to THERMO_OFF on mode/setpoint change so fresh-engage uses hysteresis_ only.
   ThermostatDirection auto_deadband_direction_{THERMO_OFF};
+
+  // AUTO fan speed thresholds: |current - target| > high → HIGH, > med → MED, else LOW
+  float auto_fan_high_thresh_{2.5f};
+  float auto_fan_med_thresh_{1.0f};
+
+  // Fan auto-off: when true the fan is suppressed while the compressor is idle
+  // in heat/cool/heat_cool modes. Independently of fan speed mode.
+  bool fan_auto_off_{false};
 
   // Compressor protection
   uint32_t comp_cooldown_ms_{3 * 60 * 1000};  // time comp must be off before restarting
@@ -131,8 +157,10 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   text_sensor::TextSensor *deadband_expires_at_sensor_{nullptr};
   binary_sensor::BinarySensor *reversing_valve_sensor_{nullptr};
   binary_sensor::BinarySensor *call_active_sensor_{nullptr};
+  text_sensor::TextSensor *fan_speed_sensor_{nullptr};
   ActronB812ZoneSwitch *zone_1_switch_{nullptr};
   ActronB812ZoneSwitch *zone_2_switch_{nullptr};
+  ActronB812FanAutoOffSwitch *fan_auto_off_switch_{nullptr};
 
   // Per-zone damper enable.  Both default ON so installations without
   // damper actuators (and YAML configs that omit the switches entirely)
@@ -147,6 +175,7 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   int32_t deadband_expires_at_last_{-1}; // dedup
   int reversing_valve_last_{-1};         // dedup (-1 = unset)
   int call_active_last_{-1};             // dedup (-1 = unset)
+  std::string fan_speed_last_{"__unset__"};  // dedup
 
   bool comp_cooldown_elapsed_();
   bool valve_settled_();
@@ -159,6 +188,16 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   void evaluate_thermostat_();
   climate::ClimateMode effective_mode_();
   void update_action_();
+
+  // Returns the appropriate fan speed when in AUTO mode, based on distance
+  // from setpoint: |current - target| > high_thresh → HIGH, > med_thresh → MED, else LOW.
+  climate::ClimateFanMode auto_fan_speed_();
+
+  // Returns true if the fan should run given the current mode and state.
+  // FAN_ONLY: always true. COOL/HEAT/HEAT_COOL: always true unless fan_auto_off_
+  // is enabled and the compressor is not running. OFF: always false.
+  bool fan_should_run_();
+
   uint8_t build_cmd_(climate::ClimateMode mode, climate::ClimateFanMode fan);
   // OR the current per-zone enable bits into a frame.  Strips any existing
   // zone bits first so callers don't need to know the default state.

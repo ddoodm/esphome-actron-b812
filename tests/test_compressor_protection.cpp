@@ -31,6 +31,8 @@ class TestableClimate : public ActronB812Climate {
   using ActronB812Climate::valve_timer_armed_;
   using ActronB812Climate::pending_change_;
   using ActronB812Climate::pending_mode_;
+  using ActronB812Climate::pending_fan_;
+  using ActronB812Climate::fan_auto_off_;
   using ActronB812Climate::thermostat_direction_;
   using ActronB812Climate::comp_off_time_;
   using ActronB812Climate::valve_switch_time_;
@@ -38,6 +40,8 @@ class TestableClimate : public ActronB812Climate {
   using ActronB812Climate::valve_settle_ms_;
   using ActronB812Climate::evaluate_thermostat_;
   using ActronB812Climate::update_action_;
+  using ActronB812Climate::auto_fan_speed_;
+  using ActronB812Climate::fan_should_run_;
 };
 
 // ---------------------------------------------------------------------------
@@ -80,6 +84,12 @@ class Harness {
   void set_mode(climate::ClimateMode mode) {
     climate::ClimateCall call;
     call.set_mode(mode);
+    climate.control(call);
+  }
+
+  void set_fan(climate::ClimateFanMode fan) {
+    climate::ClimateCall call;
+    call.set_fan_mode(fan);
     climate.control(call);
   }
 
@@ -1007,4 +1017,215 @@ TEST_CASE("Rapid mode cycling respects all protections", "[protection]") {
   REQUIRE(h.climate.comp_running_);
 
   h.check_invariants();
+}
+
+// ===========================================================================
+// AUTO fan speed selection tests
+// ===========================================================================
+
+TEST_CASE("AUTO fan speed: selects HIGH when far from setpoint", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+
+  // diff = 3.0 > 2.5 → HIGH
+  h.climate.current_temperature = 25.0f;
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS3) != 0);  // HIGH
+  CHECK((h.climate.active_cmd_ & BIT_FS1) == 0);
+  CHECK((h.climate.active_cmd_ & BIT_FS2) == 0);
+}
+
+TEST_CASE("AUTO fan speed: selects MEDIUM when moderately away from setpoint", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+
+  // diff = 1.5 — between 1.0 and 2.5 → MEDIUM
+  h.climate.current_temperature = 23.5f;
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS2) != 0);  // MEDIUM
+  CHECK((h.climate.active_cmd_ & BIT_FS1) == 0);
+  CHECK((h.climate.active_cmd_ & BIT_FS3) == 0);
+}
+
+TEST_CASE("AUTO fan speed: selects LOW when near setpoint", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+
+  // diff = 0.5 < 1.0 → LOW
+  h.climate.current_temperature = 22.5f;
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS1) != 0);  // LOW
+  CHECK((h.climate.active_cmd_ & BIT_FS2) == 0);
+  CHECK((h.climate.active_cmd_ & BIT_FS3) == 0);
+}
+
+TEST_CASE("AUTO fan speed: falls back to LOW when temperature is NaN", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.climate.current_temperature = NAN;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_FAN_ONLY);
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS1) != 0);  // LOW (NaN fallback)
+  CHECK((h.climate.active_cmd_ & BIT_FS2) == 0);
+  CHECK((h.climate.active_cmd_ & BIT_FS3) == 0);
+}
+
+TEST_CASE("AUTO fan speed: threshold boundary — exactly at 2.5 selects MEDIUM not HIGH", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+
+  // diff = exactly 2.5 — NOT > 2.5, so should be MEDIUM
+  h.climate.current_temperature = 24.5f;
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS2) != 0);  // MEDIUM
+  CHECK((h.climate.active_cmd_ & BIT_FS3) == 0);
+}
+
+TEST_CASE("AUTO fan speed: threshold boundary — exactly at 1.0 selects LOW not MEDIUM", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+
+  // diff = exactly 1.0 — NOT > 1.0, so should be LOW
+  h.climate.current_temperature = 23.0f;
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS1) != 0);  // LOW
+  CHECK((h.climate.active_cmd_ & BIT_FS2) == 0);
+}
+
+TEST_CASE("AUTO fan speed: speed updates live as temperature changes", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+
+  h.climate.current_temperature = 25.5f;  // diff 3.5 → HIGH
+  h.tick();
+  REQUIRE((h.climate.active_cmd_ & BIT_FS3) != 0);
+
+  h.climate.current_temperature = 23.2f;  // diff 1.2 → MEDIUM
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS2) != 0);
+  CHECK((h.climate.active_cmd_ & BIT_FS3) == 0);
+
+  h.climate.current_temperature = 22.3f;  // diff 0.3 → LOW
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS1) != 0);
+  CHECK((h.climate.active_cmd_ & BIT_FS2) == 0);
+}
+
+// ===========================================================================
+// Fan auto-off gating tests
+// ===========================================================================
+
+TEST_CASE("Fan auto-off OFF: fan always runs in COOL mode", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.climate.current_temperature = 25.0f;
+  h.set_fan(climate::CLIMATE_FAN_LOW);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+  h.run_for(2000);
+  REQUIRE(h.climate.comp_running_);
+
+  // Thermostat satisfied — comp stops
+  h.set_temperature(21.0f);
+  h.tick();
+  REQUIRE_FALSE(h.climate.comp_running_);
+
+  // Fan must still run (auto-off is OFF by default)
+  CHECK((h.climate.active_cmd_ & (BIT_FS1 | BIT_FS2 | BIT_FS3)) != 0);
+
+  h.check_invariants();
+}
+
+TEST_CASE("Fan auto-off ON: fan stops when compressor is idle in COOL mode", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.climate.current_temperature = 25.0f;
+  h.climate.fan_auto_off_ = true;
+  h.set_fan(climate::CLIMATE_FAN_LOW);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+  h.run_for(2000);
+  REQUIRE(h.climate.comp_running_);
+  // Fan must be running while compressor is on
+  CHECK((h.climate.active_cmd_ & (BIT_FS1 | BIT_FS2 | BIT_FS3)) != 0);
+
+  // Thermostat satisfied — run a few ticks so comp stops and fan responds
+  // (fan bits trail comp_running_ by one 222ms tick).
+  h.set_temperature(21.0f);
+  h.run_for(1000);
+  REQUIRE_FALSE(h.climate.comp_running_);
+
+  // Fan must now be off
+  CHECK((h.climate.active_cmd_ & (BIT_FS1 | BIT_FS2 | BIT_FS3)) == 0);
+
+  h.check_invariants();
+}
+
+TEST_CASE("Fan auto-off ON: fan runs again when compressor restarts", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.climate.current_temperature = 25.0f;
+  h.climate.fan_auto_off_ = true;
+  h.set_fan(climate::CLIMATE_FAN_HIGH);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+  h.run_for(2000);
+  REQUIRE(h.climate.comp_running_);
+
+  // Idle: comp + fan stop (fan trails comp by one tick — run a few)
+  h.set_temperature(21.0f);
+  h.run_for(1000);
+  REQUIRE_FALSE(h.climate.comp_running_);
+  CHECK((h.climate.active_cmd_ & (BIT_FS1 | BIT_FS2 | BIT_FS3)) == 0);
+
+  // Room heats up again — comp restarts after cooldown
+  h.set_temperature(25.5f);
+  h.run_for(COOLDOWN_MS + 2000);
+  REQUIRE(h.climate.comp_running_);
+
+  // Fan must be running again (compressor is on)
+  CHECK((h.climate.active_cmd_ & (BIT_FS1 | BIT_FS2 | BIT_FS3)) != 0);
+
+  h.check_invariants();
+}
+
+TEST_CASE("Fan auto-off ON + AUTO speed: fan is off when comp idle, speed tracks setpoint otherwise",
+          "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.climate.current_temperature = 26.0f;  // diff 4.0 → HIGH
+  h.climate.fan_auto_off_ = true;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+  h.run_for(2000);
+  REQUIRE(h.climate.comp_running_);
+  CHECK((h.climate.active_cmd_ & BIT_FS3) != 0);  // HIGH while far away
+
+  // Thermostat satisfied — comp + fan off (fan trails comp by one tick)
+  h.set_temperature(21.0f);
+  h.run_for(1000);
+  REQUIRE_FALSE(h.climate.comp_running_);
+  CHECK((h.climate.active_cmd_ & (BIT_FS1 | BIT_FS2 | BIT_FS3)) == 0);
+
+  h.check_invariants();
+}
+
+TEST_CASE("FAN_ONLY mode: fan always runs regardless of fan_auto_off", "[fan]") {
+  Harness h;
+  h.climate.fan_auto_off_ = true;
+  h.set_fan(climate::CLIMATE_FAN_LOW);
+  h.set_mode(climate::CLIMATE_MODE_FAN_ONLY);
+  h.tick();
+  CHECK((h.climate.active_cmd_ & (BIT_FS1 | BIT_FS2 | BIT_FS3)) != 0);
+  CHECK((h.climate.active_cmd_ & BIT_COMP) == 0);
 }

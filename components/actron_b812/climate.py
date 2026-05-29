@@ -18,6 +18,9 @@ ActronB812Climate = actron_b812_ns.class_(
     "ActronB812Climate", climate.Climate, cg.PollingComponent
 )
 ActronB812ZoneSwitch = actron_b812_ns.class_("ActronB812ZoneSwitch", switch.Switch)
+ActronB812FanAutoOffSwitch = actron_b812_ns.class_(
+    "ActronB812FanAutoOffSwitch", switch.Switch
+)
 
 CONF_TRANSMITTER_ID = "transmitter_id"
 CONF_COMPRESSOR_COOLDOWN = "compressor_cooldown"
@@ -37,6 +40,10 @@ CONF_REVERSING_VALVE = "reversing_valve"
 CONF_CALL_ACTIVE = "call_active"
 CONF_ZONE_1 = "zone_1"
 CONF_ZONE_2 = "zone_2"
+CONF_AUTO_FAN_HIGH_THRESHOLD = "auto_fan_high_threshold"
+CONF_AUTO_FAN_MEDIUM_THRESHOLD = "auto_fan_medium_threshold"
+CONF_FAN_AUTO_OFF = "fan_auto_off"
+CONF_FAN_SPEED = "fan_speed"
 
 CONFIG_SCHEMA = climate.climate_schema(ActronB812Climate).extend({
     cv.Required(CONF_TRANSMITTER_ID): cv.use_id(
@@ -49,6 +56,8 @@ CONFIG_SCHEMA = climate.climate_schema(ActronB812Climate).extend({
     cv.Optional(CONF_AUTO_DEADBAND, default=1.5): cv.positive_float,
     cv.Optional(CONF_AUTO_DEADBAND_TIMEOUT, default="20min"): cv.positive_time_period_milliseconds,
     cv.Optional(CONF_TIME_ID): cv.use_id(time_.RealTimeClock),
+    cv.Optional(CONF_AUTO_FAN_HIGH_THRESHOLD, default=2.5): cv.positive_float,
+    cv.Optional(CONF_AUTO_FAN_MEDIUM_THRESHOLD, default=1.0): cv.positive_float,
     cv.Optional(CONF_COMPRESSOR_RUNNING): binary_sensor.binary_sensor_schema(),
     cv.Optional(CONF_STATE_SENSOR): text_sensor.text_sensor_schema(),
     cv.Optional(CONF_PROTECTION_EXPIRES_AT): text_sensor.text_sensor_schema(
@@ -61,6 +70,7 @@ CONFIG_SCHEMA = climate.climate_schema(ActronB812Climate).extend({
     ),
     cv.Optional(CONF_REVERSING_VALVE): binary_sensor.binary_sensor_schema(),
     cv.Optional(CONF_CALL_ACTIVE): binary_sensor.binary_sensor_schema(),
+    cv.Optional(CONF_FAN_SPEED): text_sensor.text_sensor_schema(),
     cv.Optional(CONF_ZONE_1): switch.switch_schema(
         ActronB812ZoneSwitch,
         default_restore_mode="RESTORE_DEFAULT_ON",
@@ -68,6 +78,10 @@ CONFIG_SCHEMA = climate.climate_schema(ActronB812Climate).extend({
     cv.Optional(CONF_ZONE_2): switch.switch_schema(
         ActronB812ZoneSwitch,
         default_restore_mode="RESTORE_DEFAULT_ON",
+    ),
+    cv.Optional(CONF_FAN_AUTO_OFF): switch.switch_schema(
+        ActronB812FanAutoOffSwitch,
+        default_restore_mode="RESTORE_DEFAULT_OFF",
     ),
 }).extend(cv.polling_component_schema("222ms"))
 
@@ -91,6 +105,9 @@ async def to_code(config):
     if CONF_TIME_ID in config:
         t = await cg.get_variable(config[CONF_TIME_ID])
         cg.add(var.set_time(t))
+
+    cg.add(var.set_auto_fan_high_threshold(config[CONF_AUTO_FAN_HIGH_THRESHOLD]))
+    cg.add(var.set_auto_fan_medium_threshold(config[CONF_AUTO_FAN_MEDIUM_THRESHOLD]))
 
     if CONF_COMPRESSOR_RUNNING in config:
         bs = await binary_sensor.new_binary_sensor(config[CONF_COMPRESSOR_RUNNING])
@@ -124,6 +141,10 @@ async def to_code(config):
         bs = await binary_sensor.new_binary_sensor(config[CONF_CALL_ACTIVE])
         cg.add(var.set_call_active_sensor(bs))
 
+    if CONF_FAN_SPEED in config:
+        ts = await text_sensor.new_text_sensor(config[CONF_FAN_SPEED])
+        cg.add(var.set_fan_speed_sensor(ts))
+
     if CONF_ZONE_1 in config:
         sw = await switch.new_switch(config[CONF_ZONE_1], var, 1)
         cg.add(var.set_zone_1_switch(sw))
@@ -131,3 +152,7 @@ async def to_code(config):
     if CONF_ZONE_2 in config:
         sw = await switch.new_switch(config[CONF_ZONE_2], var, 2)
         cg.add(var.set_zone_2_switch(sw))
+
+    if CONF_FAN_AUTO_OFF in config:
+        sw = await switch.new_switch(config[CONF_FAN_AUTO_OFF], var)
+        cg.add(var.set_fan_auto_off_switch(sw))
