@@ -449,10 +449,41 @@ climate::ClimateFanMode ActronB812Climate::auto_fan_speed_() {
   float tgt = this->target_temperature;
   if (std::isnan(t) || std::isnan(tgt))
     return climate::CLIMATE_FAN_LOW;
-  float diff = std::fabs(t - tgt);
-  if (diff > auto_fan_high_thresh_)
+
+  // Conditioning demand in the *active* direction.  Positive means the room
+  // still needs work (too hot when cooling / too cold when heating); zero or
+  // negative (satisfied or overshot) falls through to LOW.  We deliberately
+  // do NOT use the absolute difference: e.g. in COOL at 18° with a 22° setpoint
+  // there is no cooling demand, so the fan should idle low, not run high.
+  float demand;
+  switch (pending_mode_) {
+    case climate::CLIMATE_MODE_COOL:
+      demand = t - tgt;  // hotter than setpoint → more cooling
+      break;
+    case climate::CLIMATE_MODE_HEAT:
+      demand = tgt - t;  // colder than setpoint → more heating
+      break;
+    case climate::CLIMATE_MODE_HEAT_COOL:
+      if (thermostat_direction_ == THERMO_COOL)
+        demand = t - tgt;
+      else if (thermostat_direction_ == THERMO_HEAT)
+        demand = tgt - t;
+      else
+        demand = 0.0f;  // idle — no active direction
+      break;
+    case climate::CLIMATE_MODE_FAN_ONLY:
+      // Fan-only only ramps in the cooling direction (moving warm air out);
+      // when the room is already at/below setpoint there's nothing to do.
+      demand = t - tgt;
+      break;
+    default:
+      demand = 0.0f;
+      break;
+  }
+
+  if (demand > auto_fan_high_thresh_)
     return climate::CLIMATE_FAN_HIGH;
-  if (diff > auto_fan_med_thresh_)
+  if (demand > auto_fan_med_thresh_)
     return climate::CLIMATE_FAN_MEDIUM;
   return climate::CLIMATE_FAN_LOW;
 }

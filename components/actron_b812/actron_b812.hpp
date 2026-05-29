@@ -127,7 +127,8 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   // Cleared to THERMO_OFF on mode/setpoint change so fresh-engage uses hysteresis_ only.
   ThermostatDirection auto_deadband_direction_{THERMO_OFF};
 
-  // AUTO fan speed thresholds: |current - target| > high → HIGH, > med → MED, else LOW
+  // AUTO fan speed thresholds applied to the *directional* conditioning demand
+  // (see auto_fan_speed_()): demand > high → HIGH, > med → MED, else LOW.
   float auto_fan_high_thresh_{2.5f};
   float auto_fan_med_thresh_{1.0f};
 
@@ -189,8 +190,9 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   climate::ClimateMode effective_mode_();
   void update_action_();
 
-  // Returns the appropriate fan speed when in AUTO mode, based on distance
-  // from setpoint: |current - target| > high_thresh → HIGH, > med_thresh → MED, else LOW.
+  // Returns the appropriate fan speed when in AUTO mode, based on the
+  // conditioning demand in the active direction (too hot when cooling / too
+  // cold when heating). Satisfied or overshot → LOW. See definition for details.
   climate::ClimateFanMode auto_fan_speed_();
 
   // Returns true if the fan should run given the current mode and state.

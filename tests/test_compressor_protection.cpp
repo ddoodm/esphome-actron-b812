@@ -1124,6 +1124,66 @@ TEST_CASE("AUTO fan speed: speed updates live as temperature changes", "[fan]") 
   CHECK((h.climate.active_cmd_ & BIT_FS2) == 0);
 }
 
+TEST_CASE("AUTO fan speed: COOL below setpoint stays LOW (no cooling demand)", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_COOL);
+
+  // Room far BELOW setpoint — abs diff is 4.0 but there's no cooling demand.
+  h.climate.current_temperature = 18.0f;
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS1) != 0);  // LOW
+  CHECK((h.climate.active_cmd_ & BIT_FS2) == 0);
+  CHECK((h.climate.active_cmd_ & BIT_FS3) == 0);
+}
+
+TEST_CASE("AUTO fan speed: HEAT far below setpoint selects HIGH", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_HEAT);
+
+  // Room far below setpoint → strong heating demand (22 - 18 = 4.0 > 2.5).
+  h.climate.current_temperature = 18.0f;
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS3) != 0);  // HIGH
+  CHECK((h.climate.active_cmd_ & BIT_FS1) == 0);
+  CHECK((h.climate.active_cmd_ & BIT_FS2) == 0);
+}
+
+TEST_CASE("AUTO fan speed: HEAT above setpoint stays LOW (no heating demand)", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_HEAT);
+
+  // Room ABOVE setpoint — abs diff 4.0 but no heating demand.
+  h.climate.current_temperature = 26.0f;
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS1) != 0);  // LOW
+  CHECK((h.climate.active_cmd_ & BIT_FS2) == 0);
+  CHECK((h.climate.active_cmd_ & BIT_FS3) == 0);
+}
+
+TEST_CASE("AUTO fan speed: FAN_ONLY ramps only in cooling direction", "[fan]") {
+  Harness h;
+  h.climate.target_temperature = 22.0f;
+  h.set_fan(climate::CLIMATE_FAN_AUTO);
+  h.set_mode(climate::CLIMATE_MODE_FAN_ONLY);
+
+  // Above setpoint → cooling-direction demand 3.0 → HIGH
+  h.climate.current_temperature = 25.0f;
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS3) != 0);
+
+  // Below setpoint → no demand → LOW (does not ramp up to push cold air)
+  h.climate.current_temperature = 18.0f;
+  h.tick();
+  CHECK((h.climate.active_cmd_ & BIT_FS1) != 0);
+  CHECK((h.climate.active_cmd_ & BIT_FS3) == 0);
+}
+
 // ===========================================================================
 // Fan auto-off gating tests
 // ===========================================================================
