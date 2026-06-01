@@ -13,7 +13,7 @@ climate::ClimateTraits ActronB812Climate::traits() {
   traits.add_feature_flags(flags);
   traits.set_visual_min_temperature(19);
   traits.set_visual_max_temperature(29);
-  traits.set_visual_target_temperature_step(0.5);
+  traits.set_visual_target_temperature_step(target_temperature_step_);
   traits.set_visual_current_temperature_step(0.01);
   traits.set_supported_modes({
     climate::CLIMATE_MODE_OFF,

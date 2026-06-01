@@ -42,6 +42,7 @@ CONF_ZONE_1 = "zone_1"
 CONF_ZONE_2 = "zone_2"
 CONF_AUTO_FAN_HIGH_THRESHOLD = "auto_fan_high_threshold"
 CONF_AUTO_FAN_MEDIUM_THRESHOLD = "auto_fan_medium_threshold"
+CONF_TARGET_TEMPERATURE_STEP = "target_temperature_step"
 CONF_FAN_AUTO_OFF = "fan_auto_off"
 CONF_FAN_SPEED = "fan_speed"
 
@@ -58,6 +59,7 @@ CONFIG_SCHEMA = climate.climate_schema(ActronB812Climate).extend({
     cv.Optional(CONF_TIME_ID): cv.use_id(time_.RealTimeClock),
     cv.Optional(CONF_AUTO_FAN_HIGH_THRESHOLD, default=2.5): cv.positive_float,
     cv.Optional(CONF_AUTO_FAN_MEDIUM_THRESHOLD, default=1.0): cv.positive_float,
+    cv.Optional(CONF_TARGET_TEMPERATURE_STEP, default=0.5): cv.positive_float,
     cv.Optional(CONF_COMPRESSOR_RUNNING): binary_sensor.binary_sensor_schema(),
     cv.Optional(CONF_STATE_SENSOR): text_sensor.text_sensor_schema(),
     cv.Optional(CONF_PROTECTION_EXPIRES_AT): text_sensor.text_sensor_schema(
@@ -108,6 +110,7 @@ async def to_code(config):
 
     cg.add(var.set_auto_fan_high_threshold(config[CONF_AUTO_FAN_HIGH_THRESHOLD]))
     cg.add(var.set_auto_fan_medium_threshold(config[CONF_AUTO_FAN_MEDIUM_THRESHOLD]))
+    cg.add(var.set_target_temperature_step(config[CONF_TARGET_TEMPERATURE_STEP]))
 
     if CONF_COMPRESSOR_RUNNING in config:
         bs = await binary_sensor.new_binary_sensor(config[CONF_COMPRESSOR_RUNNING])

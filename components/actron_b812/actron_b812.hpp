@@ -71,6 +71,7 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
   void set_time(time::RealTimeClock *t) { time_ = t; }
   void set_auto_fan_high_threshold(float v) { auto_fan_high_thresh_ = v; }
   void set_auto_fan_medium_threshold(float v) { auto_fan_med_thresh_ = v; }
+  void set_target_temperature_step(float v) { target_temperature_step_ = v; }
 
   void set_compressor_running_sensor(binary_sensor::BinarySensor *s) { compressor_running_sensor_ = s; }
   void set_state_sensor(text_sensor::TextSensor *s) { state_sensor_ = s; }
@@ -113,6 +114,7 @@ class ActronB812Climate : public climate::Climate, public PollingComponent {
 
   // Thermostat
   sensor::Sensor *temperature_sensor_{nullptr};
+  float target_temperature_step_{0.5f};
   float hysteresis_{0.5f};
   float auto_deadband_{1.5f};  // matches Actron B812RT factory default
   // How long after going idle before the cross-mode deadband expires.
