@@ -7,6 +7,8 @@ ESPHome external component to replace the **Actron B812(RT)** wall controller on
 
 The B812 communicates with the LE85 over a 2-wire bus using a custom pulse-distance coding protocol that has not (to my knowledge) been documented publicly before. This repo contains both the ESPHome component and [full protocol documentation](docs/protocol.md).
 
+> **Origins**: The LE85 and these wall controllers were originally designed by **OEM Electronics** and sold under the **Leasam Controls** brand before being rebadged by Actron Controls. The original [Leasam Controls catalogue](docs/Leasam-catalogue.pdf) documents the whole interoperable family and confirmed several protocol details (see [protocol.md](docs/protocol.md)).
+
 ## Features
 
 - **Modes**: off, cool, heat, heat/cool (auto), fan-only
@@ -23,44 +25,44 @@ The Actron Controls B812 is a wall-mounted controller which connects to a LE85R3
 
 > **Compatibility note**:
 >
-> **Wall controllers** — The same connector pinout is used by several other Actron Controls wall controllers: **B812**, **B812RT**(?), **B512CW**, **LE612CW** and **LE75CW**. The B812 and the B512CW are described as interchangeable on the LE85R3-1 by retailer documentation, so this component is very likely to work as a B512CW replacement too. The LE612CW / LE75CW share the connector pinout but their protocol compatibility is not confirmed.
+> **Wall controllers** — The same connector pinout is used by several other Actron Controls wall controllers: **B812**, **B812RT**(?), **B512CW**, **LE612CW** and **LE75CW**. The B812 and the B512CW are described as interchangeable on the LE85R3-1 by retailer documentation, so this component is very likely to work as a B512CW replacement too. The original Leasam catalogue documents `B512CW`, `LE612CW` and `LE75CW` as one LE85-compatible wall-pad family on an identical control connector (with `LE612CW` wired identically to `B512CW`), so they are very likely protocol-compatible — though this hasn't been confirmed bit-for-bit. Note `LE75CW` has **no zone control**, so it would not drive the zone bits.
 >
 > **Relay boards** — Verified against the **LE85R3** specifically. The wider **LE85** / **LE85R3** family is likely compatible since these controllers are sold as direct replacements for each other, but I have only personally tested with the LE85R3.
 >
 > If you successfully use this component (or fail to!) with any of these variants, please open an issue or PR.
 
-| WSHP with LE85R3 relay module | B812RT Wall Controller |
-|---|---|
-| ![WSHP with Actron Controls LE85R3 relay module](docs/wshp.jpg) | ![Actron Controls B812RT Wall Controller](docs/actron_B812RT.jpg) |
 
-### Wiring
+| WSHP with LE85R3 relay module                 | B812RT Wall Controller                 |
+| --------------------------------------------- | -------------------------------------- |
+| WSHP with Actron Controls LE85R3 relay module | Actron Controls B812RT Wall Controller |
 
-The B812RT connects to the **LE85R3 relay board** inside the WSHP unit via up to 5 wires (3 of which are required when using the on-board temperature sensor):
 
-| Wire | Required | Description |
-|---|---|---|
-| **PWR** | yes | Nominally 7 V supply - also the signal wire |
-| **COM** | yes | Common / ground return |
-| **AUX** | yes (on original B812RT, not this component) | Reads back "interlock satisfied" from the LE85 (combines remote on/off + pump interlock). The original controller won't call for conditioning without it. This component ignores it |
-| **SN1** | no | Optional remote temperature sensor input (10K3T thermistor). |
-| **SN2** | no | Optional second remote temperature sensor input. |
+## Wiring
 
-For this component, only PWR and COM are needed. See [docs/protocol.md](docs/protocol.md#pinout) for full pin details.
+### LE85R3 connector
 
-![B812 connector pins](docs/actron_b812_pins.jpg)
+The B812RT connects to the **LE85R3 relay board** via up to 5 wires. For this component, only **PWR** and **COM** are needed.
 
-#### Signal encoding
 
-The wall controller transmits by **shorting PWR to COM** for each 150 µs pulse of an 8-bit pulse-distance-encoded frame repeated every 220ms. In other words, the line idles high (~7 V) and pulses are active-low.
+| Wire    | Required                                        | Description                                                                                                                                                                                                                                                                    |
+| ------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **PWR** | yes                                             | Nominally 7 V supply — also the signal wire                                                                                                                                                                                                                                    |
+| **COM** | yes                                             | Common / ground return                                                                                                                                                                                                                                                         |
+| **AUX** | yes (original B812RT only — not this component) | Status back-channel from the LE85 — interlock/fault state (remote on/off + condenser-pump interlock, and likely fault codes too). The original controller won't call for conditioning without it. This component ignores it. See [docs/protocol.md](docs/protocol.md#aux-line) |
+| **SN1** | no                                              | Optional remote temperature sensor input (10K3T thermistor)                                                                                                                                                                                                                    |
+| **SN2** | no                                              | Optional second remote temperature sensor input                                                                                                                                                                                                                                |
 
-##### a single data frame:
-![B812 data frame](docs/actron_b812_data_frame.jpg)
 
-#### Power
+B812 connector pins
 
-The original B812 draws ~1.7 mA average (with ~35 mA peaks while it's transmitting). The PWR rail holds up to about 100 mA before collapsing entirely — an ESP32 will spike well past that during Wi-Fi TX, so powering the ESP from PWR is not practical. See [docs/protocol.md](docs/protocol.md#power-budget) for the full load test.
+See [docs/protocol.md](docs/protocol.md#pinout) for full pin details.
 
-The recommended approach is to **power the ESP from an external 5 V supply** and use an **N-channel MOSFET** to short PWR to COM under GPIO control:
+### Signal circuit (MOSFET)
+
+The ESP cannot be powered from the PWR rail — the rail collapses under the current spikes of Wi-Fi TX (see [docs/protocol.md](docs/protocol.md#power-budget) for the load test). Instead:
+
+- **Power the ESP from an external 5 V supply**
+- Use an **N-channel MOSFET** driven by a GPIO to short PWR to COM for each data pulse
 
 ```
 PWR ───────────────────────── drain
@@ -72,10 +74,12 @@ GPIO ── 100 Ω ── gate  (MOSFET)
 COM ──────────────┴──────── source
 ```
 
-- The **10 kΩ pull-down** from gate to COM ensures the MOSFET stays off if the GPIO is floating (e.g. during boot)
-- A **100 Ω series resistor** between the GPIO and gate is recommended to limit inrush current into the gate capacitance; the circuit works without it but it is good practice
+- The **10 kΩ pull-down** from gate to COM keeps the MOSFET off if the GPIO is floating (e.g. during boot)
+- The **100 Ω series resistor** on the gate limits inrush into the gate capacitance — the circuit works without it but it is good practice
 
-The ESPHome side uses `remote_transmitter` with no carrier (DC output):
+### ESPHome transmitter
+
+Declare a `remote_transmitter` with no carrier (DC output):
 
 ```yaml
 remote_transmitter:
@@ -83,6 +87,12 @@ remote_transmitter:
   pin: GPIO5        # adjust to your wiring
   carrier_duty_percent: 100%
 ```
+
+### Signal details
+
+The wall controller transmits by shorting PWR to COM for each 150 µs active-low pulse of an 8-bit pulse-distance-encoded frame, repeated every ~222 ms.
+
+Single data frame
 
 ## Installation
 
@@ -158,16 +168,18 @@ climate:
 
 ### Diagnostic sensor values
 
-| Sensor | Type | Values |
-|---|---|---|
-| `compressor_running` | binary sensor | `true` / `false` |
-| `state` | text sensor | `off`, `cooling`, `heating`, `fan_only`, `heat_idle`, `comp_cooldown`, `heat_valve_hold`, `valve_settling` |
-| `thermostat_direction` | text sensor | `idle`, `cool`, `heat` |
-| `reversing_valve` | binary sensor | `true` = heat position |
-| `call_active` | binary sensor | `true` when calling for conditioning |
-| `protection_expires_at` | text sensor | ISO 8601 timestamp, or empty when no timer active |
-| `deadband_active` | binary sensor | `true` when cross-mode deadband is suppressing engagement |
-| `deadband_expires_at` | text sensor | ISO 8601 timestamp, or empty when no deadband active |
+
+| Sensor                  | Type          | Values                                                                                                     |
+| ----------------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
+| `compressor_running`    | binary sensor | `true` / `false`                                                                                           |
+| `state`                 | text sensor   | `off`, `cooling`, `heating`, `fan_only`, `heat_idle`, `comp_cooldown`, `heat_valve_hold`, `valve_settling` |
+| `thermostat_direction`  | text sensor   | `idle`, `cool`, `heat`                                                                                     |
+| `reversing_valve`       | binary sensor | `true` = heat position                                                                                     |
+| `call_active`           | binary sensor | `true` when calling for conditioning                                                                       |
+| `protection_expires_at` | text sensor   | ISO 8601 timestamp, or empty when no timer active                                                          |
+| `deadband_active`       | binary sensor | `true` when cross-mode deadband is suppressing engagement                                                  |
+| `deadband_expires_at`   | text sensor   | ISO 8601 timestamp, or empty when no deadband active                                                       |
+
 
 ## How the thermostat works
 
@@ -194,6 +206,7 @@ cd tests
 Requires CMake ≥ 3.14 and a C++17 compiler. Catch2 is fetched automatically via CMake FetchContent.
 
 The test suite covers:
+
 - Compressor cooldown on restart
 - Heat->cool and cool->heat direction changes with full sequencing
 - Reversing valve held during cooldown, settle timer enforced after
@@ -203,7 +216,9 @@ The test suite covers:
 
 ## Tested on
 
-- ESP32-C3 (esp-idf framework)
+- ESP32-C3
+- ESP32-P4
+- ESP32-S3
 
 ## License
 
